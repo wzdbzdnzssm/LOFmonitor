@@ -1,0 +1,23 @@
+# 复制为 config.yaml 后修改（config.yaml 已在 .gitignore）
+
+schedule:
+  push_time: "14:30"   # Asia/Shanghai，仅交易日生效
+
+data:
+  batch_size: 80
+  request_delay: 0.15
+
+push:
+  enabled: true
+  # pushplus | serverchan | webhook | console
+  channel: console
+  pushplus:
+    token: ""
+  serverchan:
+    sendkey: ""
+  webhook:
+    url: ""
+
+filters:
+  min_amount: 1000000   # 最低成交额（元）
+  top_n: 10
