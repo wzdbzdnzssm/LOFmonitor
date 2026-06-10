@@ -13,6 +13,7 @@ from lofmonitor.data_sources.eastmoney import EastmoneySource, FundNavInfo, Fund
 from lofmonitor.data_sources.jisilu import JisiluSource
 from lofmonitor.data_sources.purchase import EastmoneyPurchaseSource
 from lofmonitor.data_sources.sina import SinaSource
+from lofmonitor.data_sources.tencent import TencentSource
 from lofmonitor.http_client import HttpClient
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ class LofPremiumService:
             request_delay=config.data.request_delay,
         )
         self.sina = SinaSource(self.client)
+        self.tencent = TencentSource(self.client)
         self.jisilu = JisiluSource(self.client)
         self.purchase = EastmoneyPurchaseSource(self.client)
 
@@ -69,7 +71,7 @@ class LofPremiumService:
         return df.sort_values("premium_pct", key=lambda s: s.abs(), ascending=False)
 
     def _collect_from_eastmoney(self) -> list[PremiumRecord]:
-        nav_map = self.eastmoney.fetch_nav_map()
+        nav_map = self.eastmoney.fetch_nav_map_batch()
         purchase_map = self._fetch_purchase_map()
         codes = self.eastmoney.fetch_listed_lof_codes()
         logger.info("LOF universe size: %s", len(codes))
@@ -126,6 +128,16 @@ class LofPremiumService:
 
     def _fetch_spot_quotes(self, codes: list[str]) -> list[FundQuote]:
         quotes: list[FundQuote] = []
+        
+        # Try Tencent first (no IP block, reliable)
+        try:
+            quotes = self.tencent.fetch_spot_quotes(codes)
+            if len(quotes) >= max(20, len(codes) // 10):
+                return quotes
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Tencent quotes failed: %s", exc)
+        
+        # Fallback to Eastmoney
         try:
             quotes = self.eastmoney.fetch_spot_quotes(codes)
         except Exception as exc:  # noqa: BLE001

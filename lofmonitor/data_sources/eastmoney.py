@@ -82,15 +82,8 @@ class EastmoneySource:
 
     def fetch_listed_lof_codes(self) -> list[str]:
         """All A-share tradable LOF / QDII-LOF codes."""
-        try:
-            clist_quotes = self.fetch_spot_via_clist()
-            if clist_quotes:
-                codes = sorted({quote.code for quote in clist_quotes})
-                self._save_universe_cache(codes)
-                return codes
-        except Exception:
-            pass
-
+        # Skip clist (push2.eastmoney.com is blocked on some servers)
+        # Use candidate codes directly
         cached = self._load_universe_cache()
         if cached:
             return cached
@@ -333,6 +326,48 @@ class EastmoneySource:
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
         raise RuntimeError("Eastmoney clist fallback failed") from last_error
+
+    def fetch_nav_map_batch(self) -> dict[str, FundNavInfo]:
+        """Fetch all fund NAVs in one request via Eastmoney batch API.
+
+        Returns a dict mapping fund code -> FundNavInfo for LOF-relevant codes.
+        """
+        url = "https://fund.eastmoney.com/Data/Fund_JJJZ_Data.aspx"
+        params = {"t": "1", "page": "1,50000", "js": "reData", "sort": "fcode,asc"}
+        text = self.client.session.get(
+            url, params=params, headers={"Referer": "https://fund.eastmoney.com/"}, timeout=self.client.timeout
+        ).text
+        if not text.startswith("var reData="):
+            raise RuntimeError("Unexpected batch NAV response format")
+        body = text[len("var reData=") :].rstrip(";")
+
+        # Extract showday for nav_date
+        showday_match = re.search(r'showday:(\[[^\]]*\])', body)
+        showday = json.loads(showday_match.group(1)) if showday_match else []
+        nav_date = showday[0] if showday else None
+
+        datas_match = re.search(r'datas:(\[\[.*?\]\]),', body, re.DOTALL)
+        if not datas_match:
+            raise RuntimeError("Failed to extract datas from batch NAV response")
+        rows = json.loads(datas_match.group(1))
+
+        result: dict[str, FundNavInfo] = {}
+        for row in rows:
+            code = row[0]
+            if not is_lof_exchange_code(code):
+                continue
+            name = row[1]
+            nav = _to_float(row[5])
+            estimate = _to_float(row[4])
+            result[code] = FundNavInfo(
+                code=code,
+                name=name,
+                estimate=estimate,
+                nav=nav,
+                estimate_date=None,
+                nav_date=nav_date,
+            )
+        return result
 
     def fetch_missing_navs(self, codes: Iterable[str]) -> dict[str, FundNavInfo]:
         """Fetch latest published NAV for codes absent from bulk valuation list."""
